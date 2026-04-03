@@ -1,0 +1,23 @@
+# IDE
+.vscode/
+
+# Input data
+input/
+
+# Python virtual environment
+.venv/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.Spotlight-V100
+.Trashes
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
