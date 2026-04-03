@@ -7,7 +7,8 @@ import cv2
 import tempfile
 
 # --- 設定項目 ---
-MODEL_NAME = "qwen3-vl:8b"  # または moondream など
+# MODEL_NAME = "qwen3-vl:8b"
+MODEL_NAME = "qwen3.5:9b"  # または moondream など
 
 # 判定に使用するカテゴリ定義（プロンプトに挿入）
 class_definitions = [
