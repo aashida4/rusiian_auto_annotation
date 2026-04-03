@@ -1,0 +1,12 @@
+[project]
+name = "rusiian-auto-annotation"
+version = "0.1.0"
+description = "ロシア語学習シーンの注視対象を自動判定するツール"
+requires-python = ">=3.12"
+dependencies = [
+    "ollama>=0.6.1",
+    "opencv-python-headless>=4.13.0",
+]
+
+[dependency-groups]
+dev = []
