@@ -3,12 +3,16 @@ import json
 import re
 import argparse
 import os
+import sys
 import cv2
 import tempfile
 
+# Windows環境でのUnicodeEncodeErrorを防止
+sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+
 # --- 設定項目 ---
-# MODEL_NAME = "qwen3-vl:8b"
-MODEL_NAME = "qwen3.5:9b"  # または moondream など
+# MODEL_NAME = "qwen3-vl:latest"
+MODEL_NAME = "qwen3.5:latest"  # または moondream など
 
 # 判定に使用するカテゴリ定義（プロンプトに挿入）
 class_definitions = [
@@ -71,8 +75,8 @@ def analyze_image(image_path):
     if "error" in output:
         print(f"Error: {output['error']}")
     else:
-        print(f"【判定結果】: {output['prediction']}")
-        print(f"【判断根拠】: {output['reasoning']}")
+        print(f"【判定結果】: {output.get('prediction', '不明')}")
+        print(f"【判断根拠】: {output.get('reasoning', '(根拠なし)')}")
 
 def analyze_video(video_path, interval):
     """動画からインターバルごとにフレームを抽出して解析する"""
@@ -96,7 +100,7 @@ def analyze_video(video_path, interval):
 
     frame_idx = 0
     with tempfile.TemporaryDirectory() as tmpdir:
-        while True:
+        while frame_idx < total_frames:
             cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
             ret, frame = cap.read()
             if not ret:
@@ -113,8 +117,8 @@ def analyze_video(video_path, interval):
                 print(f"  Error: {output['error']}")
                 results.append({"time": round(timestamp, 1), "frame": frame_idx, "error": output['error']})
             else:
-                print(f"  【判定結果】: {output['prediction']}")
-                print(f"  【判断根拠】: {output['reasoning']}")
+                print(f"  【判定結果】: {output.get('prediction', '不明')}")
+                print(f"  【判断根拠】: {output.get('reasoning', '(根拠なし)')}")
                 results.append({"time": round(timestamp, 1), "frame": frame_idx, **output})
 
             frame_idx += frame_interval
