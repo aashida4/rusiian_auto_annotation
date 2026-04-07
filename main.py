@@ -18,8 +18,14 @@ class_definitions = [
     {"class": "Dictionary", "description": "辞書（紙・電子）を注視している"},
     {"class": "Paper", "description": "罫線のみの作文用ミニッツペーパーを注視している（ロシア語本文なし）"},
     {"class": "Task", "description": "ロシア語が印字された問題用紙を注視している"},
+    {"class": "Memo", "description": "罫線のないメモ用紙を注視している（メモの書き込みがある可能性あり）"},
     {"class": "Others", "description": "その他（手、机、不明瞭な対象）"}
 ]
+
+# 判定ルール
+# - ロシア語の本文が印刷されていれば 'Task'
+# - 罫線のみでロシア語の本文がなければ 'Paper'
+# - 視線の先を優先して判定してください。
 
 # --- プロンプトの作成 ---
 prompt = f"""
@@ -29,15 +35,10 @@ prompt = f"""
 # カテゴリ定義
 {json.dumps(class_definitions, ensure_ascii=False, indent=2)}
 
-# 判定ルール
-- ロシア語の本文が印刷されていれば 'Task'
-- 罫線のみでロシア語の本文がなければ 'Paper'
-- 視線の先を優先して判定してください。
-
 # 出力形式
 必ず以下のJSON形式のみで回答してください。
 {{
-  "prediction": "Dictionary | Paper | Task | Others",
+  "prediction": "Dictionary | Paper | Task | Memo | Others",
   "reasoning": "判断理由"
 }}
 """
