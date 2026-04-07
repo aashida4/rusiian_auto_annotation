@@ -1,5 +1,6 @@
 import ollama
 import json
+import re
 import argparse
 import os
 import sys
@@ -15,10 +16,10 @@ MODEL_NAME = "qwen3-vl:latest"
 # 判定に使用するカテゴリ定義（プロンプトに挿入）
 class_definitions = [
     {"class": "Dictionary", "description": "辞書（紙・電子）を注視している"},
-    {"class": "Paper", "description": "罫線のみの作文用ミニッツペーパーを注視している（ロシア語本文なし）"},
+    {"class": "Paper", "description": "罫線のみの作文用ミニッツペーパーを注視している（書き込みの可能性あり）"},
     {"class": "Task", "description": "ロシア語が印字された問題用紙を注視している"},
-    {"class": "Memo", "description": "罫線のないメモ用紙を注視している（メモの書き込みがある可能性あり）"},
-    {"class": "Others", "description": "その他（手、机、不明瞭な対象）"}
+    {"class": "Memo", "description": "罫線のないメモ用紙を注視している（書き込みがある可能性あり）"},
+    {"class": "Others", "description": "その他（手、机、コンピュータ，不明瞭な対象）"}
 ]
 
 # 判定ルール
@@ -28,8 +29,8 @@ class_definitions = [
 
 # --- プロンプトの作成 ---
 prompt = f"""
-これはロシア語学習の一人称視点画像です。
-画像内の「赤色の点と緑色の縁」が示す学習者の注視点が、以下のどのカテゴリに該当するか判定してください。
+これはロシア語学習における、読解と作文作業の一人称視点画像です。
+画像内の「赤色の点と緑色の円」が示す学習者の注視点が、以下カテゴリ定義に基づいてどのカテゴリに該当するか判定してください。
 
 # カテゴリ定義
 {json.dumps(class_definitions, ensure_ascii=False, indent=2)}
@@ -42,16 +43,26 @@ prompt = f"""
 }}
 """
 
+def extract_json(text):
+    """レスポンスからJSON部分を抽出してパースする"""
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        pass
+    match = re.search(r'\{[^{}]*\}', text, re.DOTALL)
+    if match:
+        return json.loads(match.group())
+    raise ValueError(f"JSONを抽出できませんでした: {text[:200]}")
+
 def analyze_learning_scene(image_path):
     try:
         response = ollama.generate(
             model=MODEL_NAME,
             prompt=prompt,
             images=[image_path],
-            format="json",
             stream=False,
         )
-        result = json.loads(response['response'])
+        result = extract_json(response['response'])
         return result
     except Exception as e:
         return {"error": str(e)}
