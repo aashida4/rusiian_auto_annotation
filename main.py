@@ -1,6 +1,5 @@
 import ollama
 import json
-import re
 import argparse
 import os
 import sys
@@ -43,27 +42,16 @@ prompt = f"""
 }}
 """
 
-def extract_json(text):
-    """レスポンスからJSON部分を抽出してパースする"""
-    try:
-        return json.loads(text)
-    except json.JSONDecodeError:
-        pass
-    match = re.search(r'\{[^{}]*\}', text, re.DOTALL)
-    if match:
-        return json.loads(match.group())
-    raise ValueError(f"JSONを抽出できませんでした: {text[:200]}")
-
 def analyze_learning_scene(image_path):
     try:
         response = ollama.generate(
             model=MODEL_NAME,
             prompt=prompt,
             images=[image_path],
+            format="json",
             stream=False,
         )
-        raw = response['response']
-        result = extract_json(raw)
+        result = json.loads(response['response'])
         return result
     except Exception as e:
         return {"error": str(e)}
