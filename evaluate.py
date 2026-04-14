@@ -24,6 +24,8 @@ def load_annotations(annotation_path):
             if not line:
                 continue
             cols = line.split("\t")
+            if len(cols) < 6:
+                continue
             # 列: ツール名, (空), 開始時刻, 終了時刻, 持続時間, カテゴリ
             start = parse_time(cols[2])
             end = parse_time(cols[3])

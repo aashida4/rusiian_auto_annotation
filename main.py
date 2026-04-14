@@ -11,7 +11,7 @@ import tempfile
 sys.stdout.reconfigure(encoding='utf-8', errors='replace')
 
 # --- 設定項目 ---
-MODEL_NAME = "qwen3-vl:latest"
+MODEL_NAME = "gemma4:31b"
 
 # 判定に使用するカテゴリ定義（プロンプトに挿入）
 class_definitions = [
