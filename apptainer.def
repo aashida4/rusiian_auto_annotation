@@ -1,0 +1,146 @@
+Bootstrap: docker
+From: python:3.12-slim
+
+%files
+    pyproject.toml /opt/app/pyproject.toml
+    uv.lock /opt/app/uv.lock
+    main.py /opt/app/main.py
+    evaluate.py /opt/app/evaluate.py
+    visualize.py /opt/app/visualize.py
+
+%post
+    set -eu
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get update
+    apt-get install -y --no-install-recommends \
+        libglib2.0-0 \
+        ffmpeg \
+        ca-certificates \
+        curl \
+        procps \
+        tini \
+        zstd
+    rm -rf /var/lib/apt/lists/*
+
+    # Ollama サーバ本体をインストール
+    curl -fsSL https://ollama.com/install.sh | sh
+
+    pip install --no-cache-dir --upgrade pip
+    pip install --no-cache-dir \
+        "ollama>=0.6.1" \
+        "opencv-python-headless>=4.13.0" \
+        "numpy"
+
+    # ホストから models をバインドするためのマウントポイント
+    mkdir -p /models /work
+    chmod -R a+rX /opt/app
+
+    # Ollama 起動 + Python 実行用のエントリスクリプト
+    cat > /opt/app/entrypoint.sh <<'EOS'
+#!/bin/bash
+set -eu
+
+: "${OLLAMA_MODELS:=/models}"
+: "${OLLAMA_HOST:=127.0.0.1:11434}"
+export OLLAMA_MODELS OLLAMA_HOST
+
+SCRIPT="${APP_SCRIPT:-main.py}"
+
+# 外部 Ollama を使う場合はサーバ起動をスキップ
+if [ "${USE_EXTERNAL_OLLAMA:-0}" = "1" ]; then
+    exec python "/opt/app/${SCRIPT}" "$@"
+fi
+
+# Ollama サーバをバックグラウンド起動
+ollama serve >/tmp/ollama.log 2>&1 &
+OLLAMA_PID=$!
+trap 'kill $OLLAMA_PID 2>/dev/null || true' EXIT INT TERM
+
+# 起動待ち（最大30秒）
+for i in $(seq 1 60); do
+    if curl -fsS "http://${OLLAMA_HOST}/api/version" >/dev/null 2>&1; then
+        break
+    fi
+    sleep 0.5
+done
+
+if ! curl -fsS "http://${OLLAMA_HOST}/api/version" >/dev/null 2>&1; then
+    echo "Ollama サーバの起動に失敗しました。ログ:" >&2
+    cat /tmp/ollama.log >&2
+    exit 1
+fi
+
+python "/opt/app/${SCRIPT}" "$@"
+EOS
+    chmod +x /opt/app/entrypoint.sh
+
+%environment
+    export PYTHONUNBUFFERED=1
+    export PYTHONDONTWRITEBYTECODE=1
+    export OLLAMA_MODELS="${OLLAMA_MODELS:-/models}"
+    export OLLAMA_HOST="${OLLAMA_HOST:-127.0.0.1:11434}"
+
+%runscript
+    cd /work 2>/dev/null || cd /opt/app
+    APP_SCRIPT=main.py exec /opt/app/entrypoint.sh "$@"
+
+%apprun main
+    cd /work 2>/dev/null || cd /opt/app
+    APP_SCRIPT=main.py exec /opt/app/entrypoint.sh "$@"
+
+%apprun evaluate
+    cd /work 2>/dev/null || cd /opt/app
+    APP_SCRIPT=evaluate.py exec /opt/app/entrypoint.sh "$@"
+
+%apprun visualize
+    cd /work 2>/dev/null || cd /opt/app
+    APP_SCRIPT=visualize.py exec /opt/app/entrypoint.sh "$@"
+
+%apprun serve
+    : "${OLLAMA_MODELS:=/models}"
+    : "${OLLAMA_HOST:=0.0.0.0:11434}"
+    export OLLAMA_MODELS OLLAMA_HOST
+    exec ollama serve
+
+%apprun ollama
+    : "${OLLAMA_MODELS:=/models}"
+    export OLLAMA_MODELS
+    exec ollama "$@"
+
+%labels
+    Name rusiian-auto-annotation
+    Version 0.1.0
+
+%help
+    ロシア語学習シーンの注視対象を自動判定するツール。
+    コンテナ内で Ollama サーバが起動し、モデルはホストからバインドマウントします。
+
+    == 準備 ==
+    ホスト側にモデルディレクトリを用意します（通常は ~/.ollama/models）。
+      例: /home/ashida/.ollama/models
+    必要なモデル（pyproject や main.py 参照: 例 "gemma4:31b"）をホストで
+      OLLAMA_MODELS=/path/to/models ollama pull gemma4:31b
+    のように事前配置しておいてください。
+
+    == 実行例 ==
+    # GPU 利用・モデル/作業ディレクトリをマウントして画像/動画を解析
+    apptainer run --nv \
+      --bind /home/ashida/.ollama/models:/models \
+      --bind $PWD:/work --pwd /work \
+      rusiian_auto_annotation.sif input/sample.mp4
+
+    # evaluate.py / visualize.py
+    apptainer run --nv \
+      --bind /home/ashida/.ollama/models:/models \
+      --bind $PWD:/work --pwd /work \
+      --app evaluate rusiian_auto_annotation.sif <args>
+
+    # コンテナ内の ollama CLI を直接叩く（pull 等）
+    apptainer run --nv \
+      --bind /home/ashida/.ollama/models:/models \
+      --app ollama rusiian_auto_annotation.sif list
+
+    # 既に外部で動いている Ollama を使う場合
+    OLLAMA_HOST=http://192.168.1.10:11434 USE_EXTERNAL_OLLAMA=1 \
+      apptainer run --bind $PWD:/work --pwd /work \
+      rusiian_auto_annotation.sif input/sample.mp4
