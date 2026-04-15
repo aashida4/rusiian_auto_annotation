@@ -5,6 +5,7 @@ From: python:3.12-slim
     pyproject.toml /opt/app/pyproject.toml
     uv.lock /opt/app/uv.lock
     main.py /opt/app/main.py
+    main_drowsiness.py /opt/app/main_drowsiness.py
     evaluate.py /opt/app/evaluate.py
     visualize.py /opt/app/visualize.py
 

@@ -25,45 +25,101 @@ BASE_PORT = 11500
 DEFAULT_OLLAMA_HOST = "http://127.0.0.1:11434"
 SYSTEM_OLLAMA_MODELS = "/usr/share/ollama/.ollama/models"
 
-# 判定に使用するカテゴリ定義（プロンプトに挿入）
-class_definitions = [
-    {"class": "Dictionary", "description": "辞書（紙・電子）を注視している"},
-    {"class": "Paper", "description": "罫線のみの作文用ミニッツペーパーを注視している（書き込みの可能性あり）"},
-    {"class": "Task", "description": "ロシア語が印字された問題用紙を注視している"},
-    {"class": "Memo", "description": "罫線のないメモ用紙を注視している（書き込みがある可能性あり）"},
-    {"class": "Others", "description": "その他（手、机、コンピュータ，不明瞭な対象）"}
-]
-
-# 判定ルール
-# - ロシア語の本文が印刷されていれば 'Task'
-# - 罫線のみでロシア語の本文がなければ 'Paper'
-# - 視線の先を優先して判定してください。
-
 # --- プロンプトの作成 ---
-prompt = f"""
-これはロシア語学習における、読解と作文作業の一人称視点画像です。
-画像内の「赤色の点と緑色の円」が示す学習者の注視点が、以下カテゴリ定義に基づいてどのカテゴリに該当するか判定してください。
+prompt = """You are an annotator for images of learners watching e-learning lecture videos.
+Given an input image, assign labels according to the following procedure and criteria.
 
-# カテゴリ定義
-{json.dumps(class_definitions, ensure_ascii=False, indent=2)}
+Task:
+Annotate the image with:
+1. drowsiness
+2. engagement
 
-# 出力形式
-必ず以下のJSON形式のみで回答してください。
-{{
-  "prediction": "Dictionary | Paper | Task | Memo | Others",
-  "reasoning": "判断理由"
-}}
+Important procedure:
+Step 1. First determine drowsiness.
+Step 2. Then determine engagement.
+
+Label definitions:
+
+drowsiness:
+- 1 = Extremely Drowsy
+- 2 = Slightly Drowsy
+- 3 = Alert
+- x = unclear
+
+engagement:
+- 1 = Not Engaged
+- 2 = Engaged
+- x = unclear
+
+Decision rules:
+
+1. First determine drowsiness
+- 3 Alert:
+  No visible signs of drowsiness. Normal head pose, eyelids, and blinking. No visible difficulty in continuing lecture viewing.
+- 2 Slightly Drowsy:
+  Visible signs of drowsiness, such as increased blinking, yawning, drooping eyelids, rubbing eyes, or shifting posture.
+  However, the learner still appears to continue learning.
+- 1 Extremely Drowsy:
+  Fatigue appears severe enough that the learner is no longer able to properly continue watching the lecture.
+  Examples include eyes closed for extended periods, falling asleep, head dropping, or suddenly waking up.
+- x unclear:
+  No person is visible, the face/state is not visible enough, or a single image does not provide enough evidence.
+
+2. Then determine engagement
+- If drowsiness is 1 or 2, set engagement = 1 (Not Engaged).
+- Only when drowsiness is 3, determine engagement independently.
+- 2 Engaged:
+  The learner is awake and appears focused on and engaged in the lecture.
+- 1 Not Engaged:
+  The learner shows drowsiness, or appears awake but is doing something unrelated to the lecture.
+- x unclear:
+  There is not enough visual evidence to judge engagement.
+
+Output format:
+Return JSON only.
+
+{
+  "drowsiness": {
+    "label": "1 or 2 or 3 or x",
+    "reason": "brief visual evidence from the image"
+  },
+  "engagement": {
+    "label": "1 or 2 or x",
+    "reason": "brief visual evidence from the image"
+  }
+}
+
+Additional rules:
+- Base the decision only on observable visual evidence in the image.
+- Do not infer unobservable mental state beyond what is visually supported.
+- If the evidence is weak or insufficient, use x.
+- Keep reasons brief and concrete.
 """
 
 def extract_json(text):
-    """レスポンスからJSON部分を抽出してパースする"""
+    """レスポンスからJSON部分を抽出してパースする（ネストJSON対応）"""
     try:
         return json.loads(text)
     except json.JSONDecodeError:
         pass
-    match = re.search(r'\{[^{}]*\}', text, re.DOTALL)
-    if match:
-        return json.loads(match.group())
+    # ```json ... ``` で囲われているケース
+    fence = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
+    if fence:
+        try:
+            return json.loads(fence.group(1))
+        except json.JSONDecodeError:
+            pass
+    # 最初の '{' から対応する '}' までを抽出
+    start = text.find('{')
+    if start != -1:
+        depth = 0
+        for i in range(start, len(text)):
+            if text[i] == '{':
+                depth += 1
+            elif text[i] == '}':
+                depth -= 1
+                if depth == 0:
+                    return json.loads(text[start:i + 1])
     raise ValueError(f"JSONを抽出できませんでした: {text[:200]}")
 
 def analyze_learning_scene(image_path, client=None):
@@ -80,16 +136,6 @@ def analyze_learning_scene(image_path, client=None):
         return result
     except Exception as e:
         return {"error": str(e)}
-
-def analyze_image(image_path):
-    """単一画像を解析して結果を表示する"""
-    print(f"Analyzing {image_path}...")
-    output = analyze_learning_scene(image_path)
-    if "error" in output:
-        print(f"Error: {output['error']}")
-    else:
-        print(f"【判定結果】: {output.get('prediction', '不明')}")
-        print(f"【判断根拠】: {output.get('reasoning', '(根拠なし)')}")
 
 def detect_gpu_count():
     try:
@@ -186,6 +232,23 @@ def spawn_ollama_servers(num_gpus):
         print(f"[info] Ollama 準備完了: {host} (GPU {i})")
     return clients
 
+def _format_result(output):
+    drowsiness = output.get("drowsiness") or {}
+    engagement = output.get("engagement") or {}
+    return (
+        f"  drowsiness: {drowsiness.get('label', '?')} - {drowsiness.get('reason', '(no reason)')}\n"
+        f"  engagement: {engagement.get('label', '?')} - {engagement.get('reason', '(no reason)')}"
+    )
+
+def analyze_image(image_path):
+    """単一画像を解析して結果を表示する"""
+    print(f"Analyzing {image_path}...")
+    output = analyze_learning_scene(image_path)
+    if "error" in output:
+        print(f"Error: {output['error']}")
+    else:
+        print(_format_result(output))
+
 def analyze_video(video_path, interval, num_gpus):
     """動画からインターバルごとにフレームを抽出して解析する"""
     cap = cv2.VideoCapture(video_path)
@@ -244,7 +307,8 @@ def analyze_video(video_path, interval, num_gpus):
                         print(f"{tag} Error: {output['error']}", flush=True)
                         results.append({"time": round(timestamp, 1), "frame": frame_idx, "error": output['error']})
                     else:
-                        print(f"{tag} 【{output.get('prediction', '不明')}】 {output.get('reasoning', '')}", flush=True)
+                        print(f"{tag}", flush=True)
+                        print(_format_result(output), flush=True)
                         results.append({"time": round(timestamp, 1), "frame": frame_idx, **output})
 
         prod = threading.Thread(target=producer, daemon=True)
@@ -261,13 +325,13 @@ def analyze_video(video_path, interval, num_gpus):
     results.sort(key=lambda r: r["frame"])
 
     # 結果をJSONファイルに保存
-    output_path = os.path.splitext(video_path)[0] + "_results.json"
+    output_path = os.path.splitext(video_path)[0] + "_drowsiness_results.json"
     with open(output_path, "w", encoding="utf-8") as f:
         json.dump(results, f, ensure_ascii=False, indent=2)
     print(f"\n結果を保存しました: {output_path}")
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="ロシア語学習シーンの注視対象を判定する")
+    parser = argparse.ArgumentParser(description="e-learning受講者のdrowsiness/engagementを判定する")
     parser.add_argument("input", help="画像ファイルまたは動画ファイルのパス")
     parser.add_argument("--interval", type=float, default=1.0,
                         help="動画モード時のフレーム抽出間隔（秒）。デフォルト: 1.0")
