@@ -44,11 +44,20 @@ set -eu
 : "${OLLAMA_HOST:=127.0.0.1:11434}"
 export OLLAMA_MODELS OLLAMA_HOST
 
+MODE="${APP_MODE:-python}"
 SCRIPT="${APP_SCRIPT:-main.py}"
+
+run_target() {
+    case "$MODE" in
+        python)  exec python "/opt/app/${SCRIPT}" "$@" ;;
+        ollama)  exec ollama "$@" ;;
+        *)       echo "Unknown APP_MODE: $MODE" >&2; exit 2 ;;
+    esac
+}
 
 # 外部 Ollama を使う場合はサーバ起動をスキップ
 if [ "${USE_EXTERNAL_OLLAMA:-0}" = "1" ]; then
-    exec python "/opt/app/${SCRIPT}" "$@"
+    run_target "$@"
 fi
 
 # Ollama サーバをバックグラウンド起動
@@ -70,7 +79,11 @@ if ! curl -fsS "http://${OLLAMA_HOST}/api/version" >/dev/null 2>&1; then
     exit 1
 fi
 
-python "/opt/app/${SCRIPT}" "$@"
+case "$MODE" in
+    python) python "/opt/app/${SCRIPT}" "$@" ;;
+    ollama) ollama "$@" ;;
+    *) echo "Unknown APP_MODE: $MODE" >&2; exit 2 ;;
+esac
 EOS
     chmod +x /opt/app/entrypoint.sh
 
@@ -103,9 +116,7 @@ EOS
     exec ollama serve
 
 %apprun ollama
-    : "${OLLAMA_MODELS:=/models}"
-    export OLLAMA_MODELS
-    exec ollama "$@"
+    APP_MODE=ollama exec /opt/app/entrypoint.sh "$@"
 
 %labels
     Name rusiian-auto-annotation

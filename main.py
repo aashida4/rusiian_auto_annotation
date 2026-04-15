@@ -6,6 +6,8 @@ import os
 import sys
 import cv2
 import tempfile
+import threading
+import queue
 
 # Windows環境でのUnicodeEncodeErrorを防止
 sys.stdout.reconfigure(encoding='utf-8', errors='replace')
@@ -97,17 +99,33 @@ def analyze_video(video_path, interval):
     if frame_interval < 1:
         frame_interval = 1
 
-    frame_idx = 0
     with tempfile.TemporaryDirectory() as tmpdir:
-        while frame_idx < total_frames:
-            cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
-            ret, frame = cap.read()
-            if not ret:
-                break
+        q: "queue.Queue" = queue.Queue(maxsize=2)
 
-            timestamp = frame_idx / fps
-            tmp_path = os.path.join(tmpdir, f"frame_{frame_idx:06d}.png")
-            cv2.imwrite(tmp_path, frame)
+        def producer():
+            idx = 0
+            try:
+                while idx < total_frames:
+                    cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
+                    ret, frame = cap.read()
+                    if not ret:
+                        break
+                    ts = idx / fps
+                    path = os.path.join(tmpdir, f"frame_{idx:06d}.png")
+                    cv2.imwrite(path, frame)
+                    q.put((idx, ts, path))
+                    idx += frame_interval
+            finally:
+                q.put(None)
+
+        t = threading.Thread(target=producer, daemon=True)
+        t.start()
+
+        while True:
+            item = q.get()
+            if item is None:
+                break
+            frame_idx, timestamp, tmp_path = item
 
             print(f"--- {timestamp:.1f}秒 (フレーム {frame_idx}) ---")
             output = analyze_learning_scene(tmp_path)
@@ -120,7 +138,7 @@ def analyze_video(video_path, interval):
                 print(f"  【判断根拠】: {output.get('reasoning', '(根拠なし)')}")
                 results.append({"time": round(timestamp, 1), "frame": frame_idx, **output})
 
-            frame_idx += frame_interval
+        t.join()
 
     cap.release()
 
