@@ -102,6 +102,10 @@ EOS
     cd /work 2>/dev/null || cd /opt/app
     APP_SCRIPT=main.py exec /opt/app/entrypoint.sh "$@"
 
+%apprun drowsiness
+    cd /work 2>/dev/null || cd /opt/app
+    APP_SCRIPT=main_drowsiness.py exec /opt/app/entrypoint.sh "$@"
+
 %apprun evaluate
     cd /work 2>/dev/null || cd /opt/app
     APP_SCRIPT=evaluate.py exec /opt/app/entrypoint.sh "$@"
