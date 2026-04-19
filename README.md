@@ -28,14 +28,24 @@ ollama list
 
 ### コンテナ (Apptainer / Singularity)
 
+2 種類の定義ファイルを用意しています:
+
+| ファイル | バックエンド | 用途 |
+|---|---|---|
+| `apptainer.def` | Ollama (デフォルト) | 既存の Ollama 運用向け。llama.cpp も外部サーバ接続 or llama-server バイナリのバインドマウントで利用可能 |
+| `apptainer_llamacpp.def` | llama.cpp (CUDA 同梱) | llama-server を CUDA 対応でビルドして同梱。Ollama は含まない |
+
 ```bash
-# SIF ビルド (ローカルで実行し、サーバへ転送)
+# Ollama 版
 apptainer build rusiian_auto_annotation.sif apptainer.def
-# Singularity の場合
 sudo singularity build rusiian_auto_annotation.sif apptainer.def
 
+# llama.cpp 版 (CUDA 同梱)
+apptainer build rusiian_auto_annotation_llamacpp.sif apptainer_llamacpp.def
+sudo singularity build rusiian_auto_annotation_llamacpp.sif apptainer_llamacpp.def
+
 # サーバへ転送
-scp rusiian_auto_annotation.sif <server>:/path/to/
+scp rusiian_auto_annotation*.sif <server>:/path/to/
 ```
 
 ## 使い方
@@ -254,7 +264,31 @@ uv run python main.py input/sample.mp4 \
 
 #### コンテナ (Apptainer) での llama.cpp 利用
 
-`apptainer.def` には `llama-server` を同梱していないため、ユーザ側でバイナリをバインドマウントします。
+2 通りの使い方があります。
+
+**1. llama.cpp 同梱イメージ (`apptainer_llamacpp.def`) を使う (推奨)**
+
+`llama-server` を CUDA 対応でビルド・同梱した専用イメージを作成します。Ollama は含みません。
+
+```bash
+# ビルド
+apptainer build rusiian_auto_annotation_llamacpp.sif apptainer_llamacpp.def
+
+# 実行 (GGUF をバインドマウント)
+singularity run --nv \
+  --bind ~/gguf:/gguf \
+  --bind $PWD:/work --pwd /work \
+  rusiian_auto_annotation_llamacpp.sif input/sample.mp4 \
+  --llama-model /gguf/gemma-3-27b-it-Q4_K_M.gguf \
+  --llama-mmproj /gguf/mmproj-gemma-3-27b-it-f16.gguf \
+  --num-gpus 2
+```
+
+このイメージは `BACKEND=llama.cpp` がデフォルトで設定済みです。ビルド時間短縮のためには、`apptainer_llamacpp.def` 内の `CMAKE_CUDA_ARCHITECTURES` を対象サーバの GPU アーキ (RTX 30 系: `86`, A100: `80`, H100: `90` 等) に絞ってください。
+
+**2. Ollama 版イメージに `llama-server` をバインドマウント**
+
+既存の `apptainer.def` 由来の `.sif` を使い、ホスト側でビルド/取得した `llama-server` をバインドマウントする方法です。
 
 ```bash
 BACKEND=llama.cpp singularity run --nv \

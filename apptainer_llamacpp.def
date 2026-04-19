@@ -1,0 +1,177 @@
+Bootstrap: docker
+From: nvidia/cuda:12.4.1-devel-ubuntu22.04
+
+# llama.cpp (CUDA) バックエンド専用の Apptainer/Singularity イメージ定義。
+# Ollama は同梱しない。Python アプリ + CUDA ビルド済み llama-server を内包する。
+
+%files
+    pyproject.toml /opt/app/pyproject.toml
+    uv.lock /opt/app/uv.lock
+    main.py /opt/app/main.py
+    main_drowsiness.py /opt/app/main_drowsiness.py
+    evaluate.py /opt/app/evaluate.py
+    evaluate_drowsiness.py /opt/app/evaluate_drowsiness.py
+    visualize.py /opt/app/visualize.py
+    backends.py /opt/app/backends.py
+
+%post
+    set -eu
+    export DEBIAN_FRONTEND=noninteractive
+
+    # === 基本ツール + Python 3.12 (deadsnakes) ===
+    apt-get update
+    apt-get install -y --no-install-recommends \
+        software-properties-common ca-certificates curl git \
+        cmake ninja-build build-essential pkg-config \
+        libglib2.0-0 ffmpeg procps tini zstd
+    add-apt-repository ppa:deadsnakes/ppa -y
+    apt-get update
+    apt-get install -y --no-install-recommends \
+        python3.12 python3.12-venv python3.12-dev
+    curl -sS https://bootstrap.pypa.io/get-pip.py | python3.12
+    ln -sf /usr/bin/python3.12 /usr/local/bin/python
+    ln -sf /usr/bin/python3.12 /usr/local/bin/python3
+
+    # === llama.cpp を CUDA 有効でビルド ===
+    # LLAMA_CPP_REF を %environment 前に上書きしたい場合は apptainer build --build-arg 不可のため
+    # ここでハードコードするか、ビルド前に `sed` してください。
+    LLAMA_CPP_REF="master"
+    git clone --depth 1 --branch "${LLAMA_CPP_REF}" \
+        https://github.com/ggml-org/llama.cpp /tmp/llama.cpp
+    cd /tmp/llama.cpp
+    cmake -B build \
+        -DGGML_CUDA=ON \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DLLAMA_BUILD_TESTS=OFF \
+        -DLLAMA_BUILD_EXAMPLES=OFF \
+        -DLLAMA_BUILD_SERVER=ON \
+        -DCMAKE_CUDA_ARCHITECTURES="75;80;86;89;90"
+    cmake --build build --config Release -j"$(nproc)" --target llama-server
+    install -Dm755 build/bin/llama-server /usr/local/bin/llama-server
+    # 動的リンクされている共有ライブラリを /usr/local/lib/llama.cpp に配置
+    mkdir -p /usr/local/lib/llama.cpp
+    find build/bin -maxdepth 1 -name '*.so*' -exec cp -a {} /usr/local/lib/llama.cpp/ \; || true
+    echo /usr/local/lib/llama.cpp > /etc/ld.so.conf.d/llama.cpp.conf
+    ldconfig
+    cd /
+    rm -rf /tmp/llama.cpp
+
+    # === Python 依存 ===
+    python -m pip install --no-cache-dir --upgrade pip
+    python -m pip install --no-cache-dir \
+        "ollama>=0.6.1" \
+        "opencv-python-headless>=4.13.0" \
+        "numpy"
+
+    # ビルド/キャッシュ類をクリーンアップしてサイズ圧縮
+    apt-get clean
+    rm -rf /var/lib/apt/lists/* /root/.cache/pip /tmp/* /var/tmp/*
+
+    mkdir -p /models /gguf /work
+    chmod -R a+rX /opt/app
+
+    # === エントリスクリプト ===
+    cat > /opt/app/entrypoint.sh <<'EOS'
+#!/bin/bash
+set -eu
+
+# このコンテナは llama.cpp バックエンド前提
+: "${BACKEND:=llama.cpp}"
+export BACKEND
+
+SCRIPT="${APP_SCRIPT:-main.py}"
+exec python "/opt/app/${SCRIPT}" "$@"
+EOS
+    chmod +x /opt/app/entrypoint.sh
+
+%environment
+    export PYTHONUNBUFFERED=1
+    export PYTHONDONTWRITEBYTECODE=1
+    export BACKEND="${BACKEND:-llama.cpp}"
+    export PATH="/usr/local/bin:${PATH}"
+    export LD_LIBRARY_PATH="/usr/local/lib/llama.cpp:${LD_LIBRARY_PATH:-}"
+    # GGUF モデルを置くホスト側ディレクトリ (--bind 先) の既定位置
+    export LLAMA_MODEL_DIR="${LLAMA_MODEL_DIR:-/gguf}"
+
+%runscript
+    cd /work 2>/dev/null || cd /opt/app
+    APP_SCRIPT=main.py exec /opt/app/entrypoint.sh "$@"
+
+%apprun main
+    cd /work 2>/dev/null || cd /opt/app
+    APP_SCRIPT=main.py exec /opt/app/entrypoint.sh "$@"
+
+%apprun drowsiness
+    cd /work 2>/dev/null || cd /opt/app
+    APP_SCRIPT=main_drowsiness.py exec /opt/app/entrypoint.sh "$@"
+
+%apprun evaluate
+    cd /work 2>/dev/null || cd /opt/app
+    APP_SCRIPT=evaluate.py exec /opt/app/entrypoint.sh "$@"
+
+%apprun evaluate_drowsiness
+    cd /work 2>/dev/null || cd /opt/app
+    APP_SCRIPT=evaluate_drowsiness.py exec /opt/app/entrypoint.sh "$@"
+
+%apprun visualize
+    cd /work 2>/dev/null || cd /opt/app
+    APP_SCRIPT=visualize.py exec /opt/app/entrypoint.sh "$@"
+
+%apprun llama-server
+    # llama-server CLI を直接実行 (疎通確認やデバッグ用)
+    exec /usr/local/bin/llama-server "$@"
+
+%labels
+    Name rusiian-auto-annotation-llamacpp
+    Version 0.1.0
+    Backend llama.cpp
+
+%help
+    rusiian_auto_annotation を llama.cpp (CUDA) バックエンドで動かすための
+    Apptainer/Singularity イメージ定義です。Ollama は同梱していません。
+
+    == ビルド ==
+    apptainer build rusiian_auto_annotation_llamacpp.sif apptainer_llamacpp.def
+    # もしくは
+    sudo singularity build rusiian_auto_annotation_llamacpp.sif apptainer_llamacpp.def
+
+    ビルド時間は GPU アーキテクチャ数 (CMAKE_CUDA_ARCHITECTURES) に比例します。
+    対象 GPU が限定的なら、%post 内の CMAKE_CUDA_ARCHITECTURES を削ると速くなります。
+    (例: RTX 3090 のみなら "86"、A100 のみなら "80")
+
+    == 準備 (ユーザ側で必要) ==
+    GGUF モデル + mmproj をホストの任意ディレクトリに置き、--bind で /gguf にマウント。
+    例:
+      mkdir -p ~/gguf && cd ~/gguf
+      wget https://huggingface.co/ggml-org/gemma-3-27b-it-GGUF/resolve/main/gemma-3-27b-it-Q4_K_M.gguf
+      wget https://huggingface.co/ggml-org/gemma-3-27b-it-GGUF/resolve/main/mmproj-gemma-3-27b-it-f16.gguf
+
+    == 実行例 ==
+    singularity run --nv \
+      --bind ~/gguf:/gguf \
+      --bind $PWD:/work --pwd /work \
+      rusiian_auto_annotation_llamacpp.sif input/sample.mp4 \
+      --llama-model /gguf/gemma-3-27b-it-Q4_K_M.gguf \
+      --llama-mmproj /gguf/mmproj-gemma-3-27b-it-f16.gguf \
+      --num-gpus 2
+
+    # drowsiness
+    singularity run --app drowsiness --nv \
+      --bind ~/gguf:/gguf \
+      --bind $PWD:/work --pwd /work \
+      rusiian_auto_annotation_llamacpp.sif input/face/sample.mp4 \
+      --llama-model /gguf/gemma-3-27b-it-Q4_K_M.gguf \
+      --llama-mmproj /gguf/mmproj-gemma-3-27b-it-f16.gguf
+
+    # 外部の llama-server に接続するだけの使い方
+    singularity run --bind $PWD:/work --pwd /work \
+      rusiian_auto_annotation_llamacpp.sif input/sample.mp4 \
+      --llama-host http://127.0.0.1:11600
+
+    # llama-server を直接叩く (GGUF 疎通確認など)
+    singularity run --app llama-server --nv \
+      --bind ~/gguf:/gguf \
+      rusiian_auto_annotation_llamacpp.sif \
+      --model /gguf/gemma-3-27b-it-Q4_K_M.gguf \
+      --mmproj /gguf/mmproj-gemma-3-27b-it-f16.gguf \
+      --host 0.0.0.0 --port 8080 --n-gpu-layers 999 --jinja
