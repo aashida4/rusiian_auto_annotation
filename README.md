@@ -1,7 +1,8 @@
 # rusiian_auto_annotation
 
 ロシア語学習シーンの注視対象自動判定、および e-learning 受講者の居眠り・集中度判定を行うツール群。
-Ollama + Vision LLM (gemma4:31b) を使い、動画フレームを逐次解析して JSON で結果を出力する。
+Vision LLM (gemma4:31b など) で動画フレームを逐次解析し、JSON で結果を出力する。
+推論バックエンドは **Ollama** (デフォルト) と **llama.cpp** を切り替え可能。
 
 ## スクリプト一覧
 
@@ -59,7 +60,13 @@ uv run python main.py input/sample.mp4 --interval 1.0 --num-gpus 2
 |---|---|---|
 | `input` | 画像または動画ファイルのパス | (必須) |
 | `--interval` | フレーム抽出間隔 (秒) | 1.0 |
-| `--num-gpus` | 並列 Ollama インスタンス数 | nvidia-smi で自動検出 |
+| `--num-gpus` | 並列サーバインスタンス数 | nvidia-smi で自動検出 |
+| `--backend` | 推論バックエンド (`ollama` / `llama.cpp`) | `ollama` |
+| `--llama-model` | GGUF モデルのパス (llama.cpp) | (env `LLAMA_MODEL`) |
+| `--llama-mmproj` | mmproj GGUF のパス (llama.cpp) | (env `LLAMA_MMPROJ`) |
+| `--llama-server-bin` | `llama-server` バイナリのパス | `llama-server` |
+| `--llama-host` | 外部 `llama-server` URL (指定時はサーバ起動をスキップ) | (env `LLAMA_HOST`) |
+| `--llama-ngl` | GPU にオフロードするレイヤ数 | 999 (全部) |
 
 出力: `<動画名>_results.json`
 
@@ -73,11 +80,7 @@ uv run python main_drowsiness.py input/face/sample.mp4 --interval 10.0
 uv run python main_drowsiness.py input/face/sample.mp4 --num-gpus 2
 ```
 
-| 引数 | 説明 | デフォルト |
-|---|---|---|
-| `input` | 画像または動画ファイルのパス | (必須) |
-| `--interval` | フレーム抽出間隔 (秒) | 1.0 |
-| `--num-gpus` | 並列 Ollama インスタンス数 | nvidia-smi で自動検出 |
+引数は `main.py` と共通 (`input`, `--interval`, `--num-gpus`, `--backend`, `--llama-*`)。
 
 出力: `<動画名>_drowsiness_results.json`
 
@@ -178,8 +181,91 @@ USE_EXTERNAL_OLLAMA=1 singularity run --app drowsiness --nv \
 
 ## モデル設定
 
-- モデル: `gemma4:31b` (各スクリプトの `MODEL_NAME` で変更可)
+- モデル: `gemma4:31b` (各スクリプトの `MODEL_NAME` で変更可。llama.cpp バックエンド時は無視される)
 - コンテキスト長: `8192` トークン (`NUM_CTX` で変更可)
-- ホストのモデルディレクトリ:
+- ホストのモデルディレクトリ (Ollama):
   - systemd Ollama: `/usr/share/ollama/.ollama/models`
   - ユーザ Ollama: `~/.ollama/models`
+
+## バックエンド
+
+### Ollama (デフォルト)
+
+追加の設定は不要。`ollama serve` が起動していて、`MODEL_NAME` のモデルが `ollama pull` 済みであればそのまま動きます。マルチ GPU 時はスクリプトが GPU ごとに `ollama serve` を自動起動します。
+
+### llama.cpp
+
+`llama-server` を使う OpenAI 互換 API 経由のバックエンド。Ollama より細かいチューニングが可能で、Ollama に依存せずに動かせます。
+
+#### 事前準備 (ユーザ作業)
+
+1. **`llama-server` バイナリを用意する**
+   - ソースからビルド (CUDA 対応):
+     ```bash
+     git clone https://github.com/ggml-org/llama.cpp
+     cd llama.cpp
+     cmake -B build -DGGML_CUDA=ON
+     cmake --build build --config Release -j
+     # 成果物: build/bin/llama-server
+     ```
+   - もしくは [llama.cpp Releases](https://github.com/ggml-org/llama.cpp/releases) の CUDA 対応プリビルドバイナリを取得。
+   - `PATH` に通すか、`--llama-server-bin /path/to/llama-server` で指定。
+
+2. **GGUF モデルと mmproj ファイルを用意する**
+   Vision (マルチモーダル) 対応モデルでは 2 ファイル必要です。Hugging Face から取得するのが早いです。
+   例 (Gemma 3 27B, unsloth/ggml-org 提供の GGUF を使う場合):
+   ```bash
+   mkdir -p ~/gguf && cd ~/gguf
+   # 量子化済み本体
+   wget https://huggingface.co/ggml-org/gemma-3-27b-it-GGUF/resolve/main/gemma-3-27b-it-Q4_K_M.gguf
+   # mmproj (vision エンコーダ)
+   wget https://huggingface.co/ggml-org/gemma-3-27b-it-GGUF/resolve/main/mmproj-gemma-3-27b-it-f16.gguf
+   ```
+   選択するモデルは `llama-server` が対応している Vision 系に限られる点に注意 (Gemma 3 / Qwen2-VL / LLaVA 系など)。
+
+3. **疎通確認 (任意)**
+   ```bash
+   llama-server \
+     --model ~/gguf/gemma-3-27b-it-Q4_K_M.gguf \
+     --mmproj ~/gguf/mmproj-gemma-3-27b-it-f16.gguf \
+     --ctx-size 8192 --n-gpu-layers 999 --port 11600 --jinja
+   # 別ターミナルで:
+   curl http://127.0.0.1:11600/v1/models
+   ```
+
+#### 実行
+
+```bash
+# 内蔵で llama-server を起動して実行 (GPU ごとに 1 プロセス)
+uv run python main.py input/sample.mp4 \
+  --backend llama.cpp \
+  --llama-model ~/gguf/gemma-3-27b-it-Q4_K_M.gguf \
+  --llama-mmproj ~/gguf/mmproj-gemma-3-27b-it-f16.gguf \
+  --num-gpus 2
+
+# 既に起動済みの llama-server に接続する (外部サーバ)
+uv run python main.py input/sample.mp4 \
+  --backend llama.cpp \
+  --llama-host http://127.0.0.1:11600
+```
+
+環境変数でも同等の指定が可能です:
+`BACKEND`, `LLAMA_MODEL`, `LLAMA_MMPROJ`, `LLAMA_SERVER_BIN`, `LLAMA_HOST`, `LLAMA_NGL`。
+
+#### コンテナ (Apptainer) での llama.cpp 利用
+
+`apptainer.def` には `llama-server` を同梱していないため、ユーザ側でバイナリをバインドマウントします。
+
+```bash
+BACKEND=llama.cpp singularity run --nv \
+  --bind /path/to/llama-server:/usr/local/bin/llama-server \
+  --bind ~/gguf:/models \
+  --bind $PWD:/work --pwd /work \
+  rusiian_auto_annotation.sif input/sample.mp4 \
+  --backend llama.cpp \
+  --llama-model /models/gemma-3-27b-it-Q4_K_M.gguf \
+  --llama-mmproj /models/mmproj-gemma-3-27b-it-f16.gguf \
+  --num-gpus 2
+```
+
+`BACKEND=llama.cpp` をセットするとエントリスクリプトが Ollama サーバの自動起動をスキップします。

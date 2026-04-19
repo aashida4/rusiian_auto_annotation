@@ -15,6 +15,8 @@ import signal
 import urllib.request
 import urllib.error
 
+import backends
+
 # Windows環境でのUnicodeEncodeErrorを防止
 sys.stdout.reconfigure(encoding='utf-8', errors='replace')
 
@@ -240,16 +242,16 @@ def _format_result(output):
         f"  engagement: {engagement.get('label', '?')} - {engagement.get('reason', '(no reason)')}"
     )
 
-def analyze_image(image_path):
+def analyze_image(image_path, client=None):
     """単一画像を解析して結果を表示する"""
     print(f"Analyzing {image_path}...")
-    output = analyze_learning_scene(image_path)
+    output = analyze_learning_scene(image_path, client=client)
     if "error" in output:
         print(f"Error: {output['error']}")
     else:
         print(_format_result(output))
 
-def analyze_video(video_path, interval, num_gpus):
+def analyze_video(video_path, interval, clients):
     """動画からインターバルごとにフレームを抽出して解析する"""
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
@@ -259,23 +261,19 @@ def analyze_video(video_path, interval, num_gpus):
     fps = cap.get(cv2.CAP_PROP_FPS)
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     duration = total_frames / fps if fps > 0 else 0
+    num_workers = len(clients)
     print(f"動画: {video_path}")
     print(f"  FPS: {fps:.1f}, 総フレーム数: {total_frames}, 長さ: {duration:.1f}秒")
     print(f"  解析間隔: {interval}秒")
-    print(f"  並列 Ollama インスタンス数: {num_gpus}")
+    print(f"  並列ワーカ数: {num_workers}")
     print()
-
-    if num_gpus >= 2:
-        clients = spawn_ollama_servers(num_gpus)
-    else:
-        clients = [ollama.Client()]
 
     results = []
     results_lock = threading.Lock()
     frame_interval = max(1, int(fps * interval))
 
     with tempfile.TemporaryDirectory() as tmpdir:
-        q: "queue.Queue" = queue.Queue(maxsize=max(2, num_gpus * 2))
+        q: "queue.Queue" = queue.Queue(maxsize=max(2, num_workers * 2))
 
         def producer():
             idx = 0
@@ -330,13 +328,23 @@ def analyze_video(video_path, interval, num_gpus):
         json.dump(results, f, ensure_ascii=False, indent=2)
     print(f"\n結果を保存しました: {output_path}")
 
+def build_clients(args, num_gpus):
+    """バックエンドに応じて ollama.Client / LlamaCppClient のリストを返す"""
+    if args.backend == "llama.cpp":
+        return backends.create_llama_clients(args, num_gpus, ctx_size=NUM_CTX)
+    if num_gpus >= 2:
+        return spawn_ollama_servers(num_gpus)
+    return [ollama.Client()]
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="e-learning受講者のdrowsiness/engagementを判定する")
     parser.add_argument("input", help="画像ファイルまたは動画ファイルのパス")
     parser.add_argument("--interval", type=float, default=1.0,
                         help="動画モード時のフレーム抽出間隔（秒）。デフォルト: 1.0")
     parser.add_argument("--num-gpus", type=int, default=None,
-                        help="並列に立てる Ollama インスタンス数。省略時は nvidia-smi で自動検出")
+                        help="並列に立てるサーバインスタンス数。省略時は nvidia-smi で自動検出")
+    backends.add_backend_cli_args(parser)
     args = parser.parse_args()
 
     video_exts = {".mp4", ".avi", ".mov", ".mkv", ".webm"}
@@ -344,6 +352,8 @@ if __name__ == "__main__":
 
     if ext in video_exts:
         num_gpus = args.num_gpus if args.num_gpus is not None else detect_gpu_count()
-        analyze_video(args.input, args.interval, num_gpus)
+        clients = build_clients(args, num_gpus)
+        analyze_video(args.input, args.interval, clients)
     else:
-        analyze_image(args.input)
+        clients = build_clients(args, 1)
+        analyze_image(args.input, client=clients[0])

@@ -8,6 +8,7 @@ From: python:3.12-slim
     main_drowsiness.py /opt/app/main_drowsiness.py
     evaluate.py /opt/app/evaluate.py
     visualize.py /opt/app/visualize.py
+    backends.py /opt/app/backends.py
 
 %post
     set -eu
@@ -43,7 +44,8 @@ set -eu
 
 : "${OLLAMA_MODELS:=/models}"
 : "${OLLAMA_HOST:=127.0.0.1:11434}"
-export OLLAMA_MODELS OLLAMA_HOST
+: "${BACKEND:=ollama}"
+export OLLAMA_MODELS OLLAMA_HOST BACKEND
 
 MODE="${APP_MODE:-python}"
 SCRIPT="${APP_SCRIPT:-main.py}"
@@ -56,8 +58,8 @@ run_target() {
     esac
 }
 
-# 外部 Ollama を使う場合はサーバ起動をスキップ
-if [ "${USE_EXTERNAL_OLLAMA:-0}" = "1" ]; then
+# 外部 Ollama / llama.cpp バックエンドの場合は Ollama サーバ起動をスキップ
+if [ "${USE_EXTERNAL_OLLAMA:-0}" = "1" ] || [ "$BACKEND" = "llama.cpp" ]; then
     run_target "$@"
 fi
 
@@ -93,6 +95,7 @@ EOS
     export PYTHONDONTWRITEBYTECODE=1
     export OLLAMA_MODELS="${OLLAMA_MODELS:-/models}"
     export OLLAMA_HOST="${OLLAMA_HOST:-127.0.0.1:11434}"
+    export BACKEND="${BACKEND:-ollama}"
 
 %runscript
     cd /work 2>/dev/null || cd /opt/app
@@ -123,40 +126,68 @@ EOS
 %apprun ollama
     APP_MODE=ollama exec /opt/app/entrypoint.sh "$@"
 
+%apprun llama-server
+    # 任意のバインドマウントした llama-server バイナリを起動するためのヘルパ
+    # 例: singularity run --app llama-server --nv \
+    #       --bind /path/to/llama-server:/usr/local/bin/llama-server \
+    #       --bind /path/to/models:/models \
+    #       rusiian_auto_annotation.sif --model /models/model.gguf --mmproj /models/mmproj.gguf --port 11600
+    : "${LLAMA_SERVER_BIN:=llama-server}"
+    exec "${LLAMA_SERVER_BIN}" "$@"
+
 %labels
     Name rusiian-auto-annotation
     Version 0.1.0
 
 %help
     ロシア語学習シーンの注視対象を自動判定するツール。
-    コンテナ内で Ollama サーバが起動し、モデルはホストからバインドマウントします。
+    Ollama と llama.cpp の 2 種類の推論バックエンドをサポートします (デフォルト: ollama)。
 
-    == 準備 ==
+    == 準備 (Ollama バックエンド) ==
     ホスト側にモデルディレクトリを用意します（通常は ~/.ollama/models）。
       例: /home/ashida/.ollama/models
-    必要なモデル（pyproject や main.py 参照: 例 "gemma4:31b"）をホストで
+    必要なモデル（例 "gemma4:31b"）をホストで
       OLLAMA_MODELS=/path/to/models ollama pull gemma4:31b
     のように事前配置しておいてください。
 
-    == 実行例 ==
-    # GPU 利用・モデル/作業ディレクトリをマウントして画像/動画を解析
+    == 準備 (llama.cpp バックエンド) ==
+    コンテナには llama-server が同梱されていないため、ユーザ側で以下を用意します。
+      1) llama-server バイナリ (CUDA ビルド推奨)。例: /opt/llama.cpp/bin/llama-server
+      2) GGUF モデル (例: gemma-3-27b-it.gguf)
+      3) mmproj GGUF (Vision 用。例: mmproj-gemma-3-27b-it-f16.gguf)
+    llama-server はコンテナにバインドマウント、もしくは --bind で PATH に通してください。
+
+    == 実行例 (Ollama) ==
     apptainer run --nv \
       --bind /home/ashida/.ollama/models:/models \
       --bind $PWD:/work --pwd /work \
       rusiian_auto_annotation.sif input/sample.mp4
 
-    # evaluate.py / visualize.py
-    apptainer run --nv \
-      --bind /home/ashida/.ollama/models:/models \
+    == 実行例 (llama.cpp) ==
+    BACKEND=llama.cpp apptainer run --nv \
+      --bind /opt/llama.cpp/bin/llama-server:/usr/local/bin/llama-server \
+      --bind /path/to/gguf:/models \
       --bind $PWD:/work --pwd /work \
+      rusiian_auto_annotation.sif input/sample.mp4 \
+      --backend llama.cpp \
+      --llama-model /models/gemma-3-27b-it.gguf \
+      --llama-mmproj /models/mmproj-gemma-3-27b-it-f16.gguf
+
+    == その他 ==
+    # evaluate.py / visualize.py
+    apptainer run --nv --bind $PWD:/work --pwd /work \
       --app evaluate rusiian_auto_annotation.sif <args>
 
     # コンテナ内の ollama CLI を直接叩く（pull 等）
-    apptainer run --nv \
-      --bind /home/ashida/.ollama/models:/models \
+    apptainer run --nv --bind /home/ashida/.ollama/models:/models \
       --app ollama rusiian_auto_annotation.sif list
 
-    # 既に外部で動いている Ollama を使う場合
+    # 外部で動いている Ollama を使う
     OLLAMA_HOST=http://192.168.1.10:11434 USE_EXTERNAL_OLLAMA=1 \
       apptainer run --bind $PWD:/work --pwd /work \
       rusiian_auto_annotation.sif input/sample.mp4
+
+    # 外部で動いている llama-server を使う
+    apptainer run --bind $PWD:/work --pwd /work \
+      rusiian_auto_annotation.sif input/sample.mp4 \
+      --backend llama.cpp --llama-host http://192.168.1.10:8080
