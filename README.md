@@ -53,15 +53,19 @@ uv run python main.py input/sample.mp4 --interval 1.0
 
 # GPU 数を明示
 uv run python main.py input/sample.mp4 --interval 1.0 --num-gpus 2
+
+# モデルを指定
+uv run python main.py input/sample.mp4 --model gemma4:31b
 ```
 
 | 引数 | 説明 | デフォルト |
 |---|---|---|
 | `input` | 画像または動画ファイルのパス | (必須) |
+| `--model` | 使用する Ollama モデル名 | gemma4:31b |
 | `--interval` | フレーム抽出間隔 (秒) | 1.0 |
 | `--num-gpus` | 並列 Ollama インスタンス数 | nvidia-smi で自動検出 |
 
-出力: `<動画名>_results.json`
+出力: `<動画名>_results.json`, `<動画名>_metadata.json`
 
 ### main_drowsiness.py (居眠り・集中度判定)
 
@@ -71,15 +75,19 @@ uv run python main_drowsiness.py input/face/sample.mp4 --interval 10.0
 
 # マルチ GPU
 uv run python main_drowsiness.py input/face/sample.mp4 --num-gpus 2
+
+# モデルを指定
+uv run python main_drowsiness.py input/face/sample.mp4 --model qwen3.6:35b
 ```
 
 | 引数 | 説明 | デフォルト |
 |---|---|---|
 | `input` | 画像または動画ファイルのパス | (必須) |
+| `--model` | 使用する Ollama モデル名 | gemma4:31b |
 | `--interval` | フレーム抽出間隔 (秒) | 1.0 |
 | `--num-gpus` | 並列 Ollama インスタンス数 | nvidia-smi で自動検出 |
 
-出力: `<動画名>_drowsiness_results.json`
+出力: `<動画名>_drowsiness_results.json`, `<動画名>_drowsiness_metadata.json`
 
 ### evaluate.py (注視対象の精度評価)
 
@@ -178,8 +186,24 @@ USE_EXTERNAL_OLLAMA=1 singularity run --app drowsiness --nv \
 
 ## モデル設定
 
-- モデル: `gemma4:31b` (各スクリプトの `MODEL_NAME` で変更可)
+- モデル: `--model` フラグで指定可能 (デフォルト: 両スクリプトとも `gemma4:31b`)
 - コンテキスト長: `8192` トークン (`NUM_CTX` で変更可)
+
+## メタデータ
+
+動画解析時に `_metadata.json` / `_drowsiness_metadata.json` が自動生成され、以下の情報が記録される:
+
+- `model`: 使用モデル名
+- `num_ctx`: コンテキスト長
+- `video`: 動画ファイル名
+- `fps`: フレームレート
+- `total_frames`: 総フレーム数
+- `duration_sec`: 動画の長さ (秒)
+- `interval_sec`: フレーム抽出間隔 (秒)
+- `frame_interval`: フレーム間隔 (フレーム数)
+- `analyzed_frames`: 解析したフレーム数
+- `num_gpus`: 使用 GPU 数
+- `start_time` / `end_time`: 解析の開始・終了時刻
 - ホストのモデルディレクトリ:
   - systemd Ollama: `/usr/share/ollama/.ollama/models`
   - ユーザ Ollama: `~/.ollama/models`

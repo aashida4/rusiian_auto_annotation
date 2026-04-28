@@ -19,7 +19,7 @@ import urllib.error
 sys.stdout.reconfigure(encoding='utf-8', errors='replace')
 
 # --- 設定項目 ---
-MODEL_NAME = "gemma4:31b"
+DEFAULT_MODEL = "gemma4:31b"
 NUM_CTX = 8192
 BASE_PORT = 11500
 DEFAULT_OLLAMA_HOST = "http://127.0.0.1:11434"
@@ -122,11 +122,11 @@ def extract_json(text):
                     return json.loads(text[start:i + 1])
     raise ValueError(f"JSONを抽出できませんでした: {text[:200]}")
 
-def analyze_learning_scene(image_path, client=None):
+def analyze_learning_scene(image_path, model_name, client=None):
     try:
         gen = client.generate if client is not None else ollama.generate
         response = gen(
-            model=MODEL_NAME,
+            model=model_name,
             prompt=prompt,
             images=[image_path],
             stream=False,
@@ -148,17 +148,17 @@ def detect_gpu_count():
     except Exception:
         return 1
 
-def try_unload_default():
-    """既存のデフォルト Ollama (11434) が掴んでいる MODEL_NAME を解放させる (best-effort)"""
+def try_unload_default(model_name):
+    """既存のデフォルト Ollama (11434) が掴んでいるモデルを解放させる (best-effort)"""
     try:
         req = urllib.request.Request(
             f"{DEFAULT_OLLAMA_HOST}/api/generate",
-            data=json.dumps({"model": MODEL_NAME, "keep_alive": 0}).encode(),
+            data=json.dumps({"model": model_name, "keep_alive": 0}).encode(),
             headers={"Content-Type": "application/json"},
             method="POST",
         )
         urllib.request.urlopen(req, timeout=5).read()
-        print(f"[info] 既存 Ollama ({DEFAULT_OLLAMA_HOST}) のモデル {MODEL_NAME} をアンロードしました")
+        print(f"[info] 既存 Ollama ({DEFAULT_OLLAMA_HOST}) のモデル {model_name} をアンロードしました")
         time.sleep(3)
     except Exception as e:
         print(f"[warn] 既存 Ollama アンロード要求失敗（続行）: {e}")
@@ -174,9 +174,9 @@ def wait_ready(host, timeout=120):
             time.sleep(0.5)
     return None
 
-def spawn_ollama_servers(num_gpus):
+def spawn_ollama_servers(num_gpus, model_name):
     """各 GPU に 1 インスタンスずつ ollama serve を立てて Client のリストを返す"""
-    try_unload_default()
+    try_unload_default(model_name)
     procs = []
     clients = []
 
@@ -240,17 +240,20 @@ def _format_result(output):
         f"  engagement: {engagement.get('label', '?')} - {engagement.get('reason', '(no reason)')}"
     )
 
-def analyze_image(image_path):
+def analyze_image(image_path, model_name):
     """単一画像を解析して結果を表示する"""
     print(f"Analyzing {image_path}...")
-    output = analyze_learning_scene(image_path)
+    output = analyze_learning_scene(image_path, model_name)
     if "error" in output:
         print(f"Error: {output['error']}")
     else:
         print(_format_result(output))
 
-def analyze_video(video_path, interval, num_gpus):
+def analyze_video(video_path, interval, num_gpus, model_name):
     """動画からインターバルごとにフレームを抽出して解析する"""
+    import datetime
+    start_time = datetime.datetime.now().isoformat()
+
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
         print(f"Error: 動画を開けませんでした: {video_path}")
@@ -260,13 +263,14 @@ def analyze_video(video_path, interval, num_gpus):
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     duration = total_frames / fps if fps > 0 else 0
     print(f"動画: {video_path}")
+    print(f"  モデル: {model_name}")
     print(f"  FPS: {fps:.1f}, 総フレーム数: {total_frames}, 長さ: {duration:.1f}秒")
     print(f"  解析間隔: {interval}秒")
     print(f"  並列 Ollama インスタンス数: {num_gpus}")
     print()
 
     if num_gpus >= 2:
-        clients = spawn_ollama_servers(num_gpus)
+        clients = spawn_ollama_servers(num_gpus, model_name)
     else:
         clients = [ollama.Client()]
 
@@ -300,7 +304,7 @@ def analyze_video(video_path, interval, num_gpus):
                 if item is None:
                     break
                 frame_idx, timestamp, tmp_path = item
-                output = analyze_learning_scene(tmp_path, client=client)
+                output = analyze_learning_scene(tmp_path, model_name, client=client)
                 with results_lock:
                     tag = f"[GPU{worker_id}] {timestamp:.1f}秒 (フレーム {frame_idx})"
                     if "error" in output:
@@ -322,17 +326,43 @@ def analyze_video(video_path, interval, num_gpus):
 
     cap.release()
 
+    end_time = datetime.datetime.now().isoformat()
+
     results.sort(key=lambda r: r["frame"])
 
     # 結果をJSONファイルに保存
-    output_path = os.path.splitext(video_path)[0] + "_drowsiness_results.json"
+    base = os.path.splitext(video_path)[0]
+    output_path = base + "_drowsiness_results.json"
     with open(output_path, "w", encoding="utf-8") as f:
         json.dump(results, f, ensure_ascii=False, indent=2)
     print(f"\n結果を保存しました: {output_path}")
 
+    # メタデータを保存
+    frame_interval = max(1, int(fps * interval))
+    metadata = {
+        "model": model_name,
+        "num_ctx": NUM_CTX,
+        "video": os.path.basename(video_path),
+        "fps": round(fps, 2),
+        "total_frames": total_frames,
+        "duration_sec": round(duration, 1),
+        "interval_sec": interval,
+        "frame_interval": frame_interval,
+        "analyzed_frames": len(results),
+        "num_gpus": num_gpus,
+        "start_time": start_time,
+        "end_time": end_time,
+    }
+    meta_path = base + "_drowsiness_metadata.json"
+    with open(meta_path, "w", encoding="utf-8") as f:
+        json.dump(metadata, f, ensure_ascii=False, indent=2)
+    print(f"メタデータを保存しました: {meta_path}")
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="e-learning受講者のdrowsiness/engagementを判定する")
     parser.add_argument("input", help="画像ファイルまたは動画ファイルのパス")
+    parser.add_argument("--model", default=DEFAULT_MODEL,
+                        help=f"使用する Ollama モデル名。デフォルト: {DEFAULT_MODEL}")
     parser.add_argument("--interval", type=float, default=1.0,
                         help="動画モード時のフレーム抽出間隔（秒）。デフォルト: 1.0")
     parser.add_argument("--num-gpus", type=int, default=None,
@@ -344,6 +374,6 @@ if __name__ == "__main__":
 
     if ext in video_exts:
         num_gpus = args.num_gpus if args.num_gpus is not None else detect_gpu_count()
-        analyze_video(args.input, args.interval, num_gpus)
+        analyze_video(args.input, args.interval, num_gpus, args.model)
     else:
-        analyze_image(args.input)
+        analyze_image(args.input, args.model)
