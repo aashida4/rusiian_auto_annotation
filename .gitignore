@@ -4,6 +4,9 @@
 # Input data
 input/
 
+# Evaluation output
+out/
+
 # Python virtual environment
 .venv/
 

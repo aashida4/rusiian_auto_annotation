@@ -1,0 +1,6 @@
+subject_id,log_path,gt_path,offset_sec
+1,../../input/honban/0620/1/world_results.json,../../input/honban/0620/1/Task.txt,0
+2,../../input/honban/0620/2/world_results.json,../../input/honban/0620/2/Task.txt,0
+3,../../input/honban/0620/3/world_results.json,../../input/honban/0620/3/synchronized_video.txt,0
+4,../../input/honban/0620/4/world_results.json,../../input/honban/0620/4/synchronized_video.txt,0
+0711,../../input/honban/0711/world_results.json,../../input/honban/0711/Task.txt,+6

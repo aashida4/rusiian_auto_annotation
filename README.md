@@ -14,7 +14,7 @@ src/
 │   ├── evaluate.py             … 注視対象の精度評価
 │   ├── evaluate_drowsiness.py  … 居眠り・集中度の精度評価
 │   └── visualize.py            … 判定結果のフレームオーバーレイ
-└── eval_icce/         # ICCE 投稿向け評価スクリプト (作業中)
+└── eval_icce/         # ICCE 投稿向け評価スクリプト (5被験者を一括集計、詳細は src/eval_icce/README.md)
 ```
 
 ## スクリプト一覧
@@ -26,6 +26,7 @@ src/
 | `src/evaluation/evaluate.py` | `main.py` の出力を人間アノテーション TSV と比較して精度評価 |
 | `src/evaluation/evaluate_drowsiness.py` | `main_drowsiness.py` の出力を drowsiness / engagement 各 TSV と比較して精度評価 |
 | `src/evaluation/visualize.py` | `main.py` の判定結果を動画フレームにオーバーレイして可視化 |
+| `src/eval_icce/evaluate.py` | 複数被験者のVLM出力をマニフェストCSVで一括集計し、混同行列・Cohen's kappa・Markdownレポートを出力 (詳細は `src/eval_icce/README.md`) |
 
 ## セットアップ
 
