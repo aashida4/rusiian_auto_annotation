@@ -3,15 +3,29 @@
 ロシア語学習シーンの注視対象自動判定、および e-learning 受講者の居眠り・集中度判定を行うツール群。
 Ollama + Vision LLM (gemma4:31b) を使い、動画フレームを逐次解析して JSON で結果を出力する。
 
+## ディレクトリ構成
+
+```
+src/
+├── detection/         # 動画フレーム解析 (Ollama + Vision LLM)
+│   ├── main.py              … 注視対象判定
+│   └── main_drowsiness.py   … 居眠り・集中度判定
+├── evaluation/        # 出力 JSON のオフライン評価・可視化
+│   ├── evaluate.py             … 注視対象の精度評価
+│   ├── evaluate_drowsiness.py  … 居眠り・集中度の精度評価
+│   └── visualize.py            … 判定結果のフレームオーバーレイ
+└── eval_icce/         # ICCE 投稿向け評価スクリプト (作業中)
+```
+
 ## スクリプト一覧
 
 | スクリプト | 概要 |
 |---|---|
-| `main.py` | 一人称視点画像から注視対象 (Dictionary / Paper / Task / Memo / Others) を判定 |
-| `main_drowsiness.py` | e-learning 受講者の drowsiness (1-3) と engagement (1-2) を判定 |
-| `evaluate.py` | `main.py` の出力を人間アノテーション TSV と比較して精度評価 |
-| `evaluate_drowsiness.py` | `main_drowsiness.py` の出力を drowsiness / engagement 各 TSV と比較して精度評価 |
-| `visualize.py` | `main.py` の判定結果を動画フレームにオーバーレイして可視化 |
+| `src/detection/main.py` | 一人称視点画像から注視対象 (Dictionary / Paper / Task / Memo / Others) を判定 |
+| `src/detection/main_drowsiness.py` | e-learning 受講者の drowsiness (1-3) と engagement (1-2) を判定 |
+| `src/evaluation/evaluate.py` | `main.py` の出力を人間アノテーション TSV と比較して精度評価 |
+| `src/evaluation/evaluate_drowsiness.py` | `main_drowsiness.py` の出力を drowsiness / engagement 各 TSV と比較して精度評価 |
+| `src/evaluation/visualize.py` | `main.py` の判定結果を動画フレームにオーバーレイして可視化 |
 
 ## セットアップ
 
@@ -39,23 +53,23 @@ scp rusiian_auto_annotation.sif <server>:/path/to/
 
 ## 使い方
 
-### main.py (注視対象判定)
+### src/detection/main.py (注視対象判定)
 
 ```bash
 # 単一画像
-uv run python main.py input/sample.png
+uv run python src/detection/main.py input/sample.png
 
 # 動画 (10秒間隔)
-uv run python main.py input/sample.mp4 --interval 10.0
+uv run python src/detection/main.py input/sample.mp4 --interval 10.0
 
 # マルチ GPU (自動検出)
-uv run python main.py input/sample.mp4 --interval 1.0
+uv run python src/detection/main.py input/sample.mp4 --interval 1.0
 
 # GPU 数を明示
-uv run python main.py input/sample.mp4 --interval 1.0 --num-gpus 2
+uv run python src/detection/main.py input/sample.mp4 --interval 1.0 --num-gpus 2
 
 # モデルを指定
-uv run python main.py input/sample.mp4 --model gemma4:31b
+uv run python src/detection/main.py input/sample.mp4 --model gemma4:31b
 ```
 
 | 引数 | 説明 | デフォルト |
@@ -67,17 +81,17 @@ uv run python main.py input/sample.mp4 --model gemma4:31b
 
 出力: `<動画名>_results.json`, `<動画名>_metadata.json`
 
-### main_drowsiness.py (居眠り・集中度判定)
+### src/detection/main_drowsiness.py (居眠り・集中度判定)
 
 ```bash
 # 動画
-uv run python main_drowsiness.py input/face/sample.mp4 --interval 10.0
+uv run python src/detection/main_drowsiness.py input/face/sample.mp4 --interval 10.0
 
 # マルチ GPU
-uv run python main_drowsiness.py input/face/sample.mp4 --num-gpus 2
+uv run python src/detection/main_drowsiness.py input/face/sample.mp4 --num-gpus 2
 
 # モデルを指定
-uv run python main_drowsiness.py input/face/sample.mp4 --model qwen3.6:35b
+uv run python src/detection/main_drowsiness.py input/face/sample.mp4 --model qwen3.6:35b
 ```
 
 | 引数 | 説明 | デフォルト |
@@ -89,10 +103,10 @@ uv run python main_drowsiness.py input/face/sample.mp4 --model qwen3.6:35b
 
 出力: `<動画名>_drowsiness_results.json`, `<動画名>_drowsiness_metadata.json`
 
-### evaluate.py (注視対象の精度評価)
+### src/evaluation/evaluate.py (注視対象の精度評価)
 
 ```bash
-uv run python evaluate.py input/sample.mp4 \
+uv run python src/evaluation/evaluate.py input/sample.mp4 \
   --annotation input/sample_annotation.tsv \
   --output results.csv
 ```
@@ -105,10 +119,10 @@ uv run python evaluate.py input/sample.mp4 \
 | `--offset` | 時刻オフセット (秒) | 0.0 |
 | `--output` | 比較結果 CSV 出力先 | (なし) |
 
-### evaluate_drowsiness.py (居眠り・集中度の精度評価)
+### src/evaluation/evaluate_drowsiness.py (居眠り・集中度の精度評価)
 
 ```bash
-uv run python evaluate_drowsiness.py input/face/sample.mp4 \
+uv run python src/evaluation/evaluate_drowsiness.py input/face/sample.mp4 \
   --drowsiness input/face/sample.drowsiness.tsv \
   --engagement input/face/sample.engagement.tsv \
   --output results.csv
@@ -123,10 +137,10 @@ uv run python evaluate_drowsiness.py input/face/sample.mp4 \
 | `--offset` | 時刻オフセット (秒) | 0.0 |
 | `--output` | 比較結果 CSV 出力先 | (なし) |
 
-### visualize.py (結果の可視化)
+### src/evaluation/visualize.py (結果の可視化)
 
 ```bash
-uv run python visualize.py input/sample.mp4 --grid
+uv run python src/evaluation/visualize.py input/sample.mp4 --grid
 ```
 
 | 引数 | 説明 | デフォルト |
@@ -141,7 +155,7 @@ uv run python visualize.py input/sample.mp4 --grid
 ## コンテナでの実行
 
 ```bash
-# 注視対象判定 (デフォルト: main.py)
+# 注視対象判定 (デフォルト: src/detection/main.py)
 singularity run --nv \
   --bind /path/to/models:/models \
   --bind $PWD:/work --pwd /work \
@@ -153,11 +167,19 @@ singularity run --app drowsiness --nv \
   --bind $PWD:/work --pwd /work \
   rusiian_auto_annotation.sif input/sample.mp4 --num-gpus 4
 
-# 評価
+# 注視対象の評価
 singularity run --app evaluate --nv \
   --bind /path/to/models:/models \
   --bind $PWD:/work --pwd /work \
   rusiian_auto_annotation.sif input/sample.mp4 --annotation input/sample.tsv
+
+# 居眠り・集中度の評価 (--app evaluate_drowsiness)
+singularity run --app evaluate_drowsiness --nv \
+  --bind /path/to/models:/models \
+  --bind $PWD:/work --pwd /work \
+  rusiian_auto_annotation.sif input/face/sample.mp4 \
+    --drowsiness input/face/sample.drowsiness.tsv \
+    --engagement input/face/sample.engagement.tsv
 
 # 可視化
 singularity run --app visualize --nv \

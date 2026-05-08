@@ -4,10 +4,11 @@ From: python:3.12-slim
 %files
     pyproject.toml /opt/app/pyproject.toml
     uv.lock /opt/app/uv.lock
-    main.py /opt/app/main.py
-    main_drowsiness.py /opt/app/main_drowsiness.py
-    evaluate.py /opt/app/evaluate.py
-    visualize.py /opt/app/visualize.py
+    src/detection/main.py /opt/app/src/detection/main.py
+    src/detection/main_drowsiness.py /opt/app/src/detection/main_drowsiness.py
+    src/evaluation/evaluate.py /opt/app/src/evaluation/evaluate.py
+    src/evaluation/evaluate_drowsiness.py /opt/app/src/evaluation/evaluate_drowsiness.py
+    src/evaluation/visualize.py /opt/app/src/evaluation/visualize.py
 
 %post
     set -eu
@@ -46,7 +47,7 @@ set -eu
 export OLLAMA_MODELS OLLAMA_HOST
 
 MODE="${APP_MODE:-python}"
-SCRIPT="${APP_SCRIPT:-main.py}"
+SCRIPT="${APP_SCRIPT:-src/detection/main.py}"
 
 run_target() {
     case "$MODE" in
@@ -96,23 +97,27 @@ EOS
 
 %runscript
     cd /work 2>/dev/null || cd /opt/app
-    APP_SCRIPT=main.py exec /opt/app/entrypoint.sh "$@"
+    APP_SCRIPT=src/detection/main.py exec /opt/app/entrypoint.sh "$@"
 
 %apprun main
     cd /work 2>/dev/null || cd /opt/app
-    APP_SCRIPT=main.py exec /opt/app/entrypoint.sh "$@"
+    APP_SCRIPT=src/detection/main.py exec /opt/app/entrypoint.sh "$@"
 
 %apprun drowsiness
     cd /work 2>/dev/null || cd /opt/app
-    APP_SCRIPT=main_drowsiness.py exec /opt/app/entrypoint.sh "$@"
+    APP_SCRIPT=src/detection/main_drowsiness.py exec /opt/app/entrypoint.sh "$@"
 
 %apprun evaluate
     cd /work 2>/dev/null || cd /opt/app
-    APP_SCRIPT=evaluate.py exec /opt/app/entrypoint.sh "$@"
+    APP_SCRIPT=src/evaluation/evaluate.py exec /opt/app/entrypoint.sh "$@"
+
+%apprun evaluate_drowsiness
+    cd /work 2>/dev/null || cd /opt/app
+    APP_SCRIPT=src/evaluation/evaluate_drowsiness.py exec /opt/app/entrypoint.sh "$@"
 
 %apprun visualize
     cd /work 2>/dev/null || cd /opt/app
-    APP_SCRIPT=visualize.py exec /opt/app/entrypoint.sh "$@"
+    APP_SCRIPT=src/evaluation/visualize.py exec /opt/app/entrypoint.sh "$@"
 
 %apprun serve
     : "${OLLAMA_MODELS:=/models}"
@@ -134,7 +139,7 @@ EOS
     == 準備 ==
     ホスト側にモデルディレクトリを用意します（通常は ~/.ollama/models）。
       例: /home/ashida/.ollama/models
-    必要なモデル（pyproject や main.py 参照: 例 "gemma4:31b"）をホストで
+    必要なモデル（pyproject や src/detection/main.py 参照: 例 "gemma4:31b"）をホストで
       OLLAMA_MODELS=/path/to/models ollama pull gemma4:31b
     のように事前配置しておいてください。
 
