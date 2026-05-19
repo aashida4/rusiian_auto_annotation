@@ -1,0 +1,30 @@
+# VCS
+.git/
+.gitignore
+
+# IDE / tooling
+.vscode/
+.claude/
+
+# ローカル仮想環境
+.venv/
+
+# Apptainer/Singularity の成果物 (Docker ビルドに不要)
+*.sif
+*.sif.bak
+
+# 入出力データ (実行時は volume でマウントする)
+input/
+out/
+
+# Python キャッシュ
+__pycache__/
+**/__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+
+# OS
+.DS_Store
+._*

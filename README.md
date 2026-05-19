@@ -52,6 +52,21 @@ sudo singularity build rusiian_auto_annotation.sif apptainer.def
 scp rusiian_auto_annotation.sif <server>:/path/to/
 ```
 
+### コンテナ (Docker)
+
+GPU サーバーで Docker を使う場合は、`Dockerfile` + `docker-compose.yml` が用意してあります。
+
+事前条件:
+- Docker 24+ と [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/) がホストに導入済みであること (`docker run --rm --gpus all nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi` で動作確認できる状態)
+- ホスト側に Ollama のモデルが pull 済み (例: `OLLAMA_MODELS=$HOME/.ollama/models ollama pull gemma4:31b`)
+
+```bash
+# ビルド
+docker build -t rusiian-auto-annotation:latest .
+# もしくは
+docker compose build
+```
+
 ## 使い方
 
 ### src/detection/main.py (注視対象判定)
@@ -194,6 +209,84 @@ singularity run --app ollama --nv \
   rusiian_auto_annotation.sif list
 ```
 
+## Docker での実行
+
+第1引数で起動するスクリプトを切り替えます (`main` / `drowsiness` / `evaluate` / `evaluate_drowsiness` / `visualize` / `eval_icce` / `ollama` / `serve`)。
+ホストの Ollama モデルディレクトリを `/models` に、作業ディレクトリを `/work` にバインドするのが基本構成です。
+
+### `docker run` で直接実行
+
+```bash
+# 注視対象判定 (デフォルト: main)
+docker run --rm --gpus all \
+  -v "$HOME/.ollama/models:/models" \
+  -v "$PWD:/work" -w /work \
+  rusiian-auto-annotation:latest \
+  main input/sample.mp4 --num-gpus 2
+
+# 居眠り判定
+docker run --rm --gpus all \
+  -v "$HOME/.ollama/models:/models" \
+  -v "$PWD:/work" -w /work \
+  rusiian-auto-annotation:latest \
+  drowsiness input/face/sample.mp4 --num-gpus 4
+
+# 注視対象の精度評価 (GPU は不要だが共通の Volume 設定で OK)
+docker run --rm \
+  -v "$PWD:/work" -w /work \
+  rusiian-auto-annotation:latest \
+  evaluate input/sample.mp4 --annotation input/sample.tsv --output results.csv
+
+# 居眠り・集中度の精度評価
+docker run --rm \
+  -v "$PWD:/work" -w /work \
+  rusiian-auto-annotation:latest \
+  evaluate_drowsiness input/face/sample.mp4 \
+    --drowsiness input/face/sample.drowsiness.tsv \
+    --engagement input/face/sample.engagement.tsv
+
+# 可視化
+docker run --rm \
+  -v "$PWD:/work" -w /work \
+  rusiian-auto-annotation:latest \
+  visualize input/sample.mp4 --grid
+
+# Ollama CLI (例: モデル一覧 / pull)
+docker run --rm --gpus all \
+  -v "$HOME/.ollama/models:/models" \
+  rusiian-auto-annotation:latest \
+  ollama list
+docker run --rm --gpus all \
+  -v "$HOME/.ollama/models:/models" \
+  rusiian-auto-annotation:latest \
+  ollama pull gemma4:31b
+```
+
+### `docker compose` で実行
+
+`docker-compose.yml` には `app` (実行用) と `ollama` (共有サーバ用、profile=server) の 2 サービスを定義しています。
+
+```bash
+# モデルディレクトリを変えたいときは環境変数で指定
+export OLLAMA_MODELS_DIR=$HOME/.ollama/models
+
+# 注視対象判定 (マルチ GPU)
+docker compose run --rm app main input/sample.mp4 --num-gpus 2
+
+# 居眠り判定
+docker compose run --rm app drowsiness input/face/sample.mp4 --num-gpus 2
+
+# 評価
+docker compose run --rm app evaluate input/sample.mp4 --annotation input/sample.tsv
+
+# Ollama を常駐サーバとして起動し、別プロセスから外部接続で叩く
+docker compose --profile server up -d ollama
+docker compose run --rm \
+  -e USE_EXTERNAL_OLLAMA=1 \
+  -e OLLAMA_HOST=http://ollama:11434 \
+  app main input/sample.mp4
+```
+
 ### マルチ GPU 時の注意
 
 - `--num-gpus 2` 以上を指定すると、スクリプトが GPU ごとに `ollama serve` を自動起動する
@@ -201,10 +294,19 @@ singularity run --app ollama --nv \
 - コンテナ内で `USE_EXTERNAL_OLLAMA=1` を付けると、entrypoint の Ollama 起動をスキップできる (マルチ GPU 時に推奨)
 
 ```bash
+# Apptainer / Singularity
 USE_EXTERNAL_OLLAMA=1 singularity run --app drowsiness --nv \
   --bind /path/to/models:/models \
   --bind $PWD:/work --pwd /work \
   rusiian_auto_annotation.sif input/sample.mp4 --num-gpus 4
+
+# Docker
+docker run --rm --gpus all \
+  -e USE_EXTERNAL_OLLAMA=1 \
+  -v "$HOME/.ollama/models:/models" \
+  -v "$PWD:/work" -w /work \
+  rusiian-auto-annotation:latest \
+  drowsiness input/sample.mp4 --num-gpus 4
 ```
 
 ## モデル設定

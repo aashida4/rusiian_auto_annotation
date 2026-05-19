@@ -1,0 +1,66 @@
+# GPU サーバーで使う際のサンプル compose。
+# 事前条件:
+#   - Docker 24+ と NVIDIA Container Toolkit がホストに導入済み
+#   - ホスト側に Ollama のモデルが pull 済み
+#       例) OLLAMA_MODELS=$HOME/.ollama/models ollama pull gemma4:31b
+#
+# 使い方:
+#   docker compose build
+#   docker compose run --rm app main input/sample.mp4 --num-gpus 2
+#   docker compose run --rm app drowsiness input/face/sample.mp4 --num-gpus 2
+#   docker compose run --rm app evaluate input/sample.mp4 --annotation input/sample.tsv
+#   docker compose run --rm app ollama list
+
+services:
+  app:
+    image: rusiian-auto-annotation:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+    # NVIDIA Container Toolkit の標準的な GPU 割り当て
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    environment:
+      OLLAMA_MODELS: /models
+      # マルチ GPU 時は Python 側で GPU 毎に ollama serve を立てるため、
+      # entrypoint 内の起動はスキップしておくのが安全。
+      # USE_EXTERNAL_OLLAMA: "1"
+    volumes:
+      # ホストの Ollama モデルディレクトリ (環境に合わせて書き換え)
+      - ${OLLAMA_MODELS_DIR:-${HOME}/.ollama/models}:/models
+      # カレントディレクトリを /work にバインド
+      - ./:/work
+    working_dir: /work
+    # 終了時に SIGTERM を受け取りやすくする
+    init: false
+    stdin_open: true
+    tty: true
+    # デフォルトコマンドは help 表示。必要に応じて run --rm app <app> <args> で上書きする
+    command: ["main", "--help"]
+
+  # 共有 Ollama サーバとして起動したい場合のサンプル。
+  # 別シェルで `docker compose up -d ollama` し、
+  # クライアント側は USE_EXTERNAL_OLLAMA=1 + OLLAMA_HOST=http://ollama:11434 で接続する。
+  ollama:
+    image: rusiian-auto-annotation:latest
+    profiles: ["server"]
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    environment:
+      OLLAMA_MODELS: /models
+      OLLAMA_HOST_SERVE: 0.0.0.0:11434
+    volumes:
+      - ${OLLAMA_MODELS_DIR:-${HOME}/.ollama/models}:/models
+    ports:
+      - "11434:11434"
+    command: ["serve"]
