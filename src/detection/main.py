@@ -186,7 +186,7 @@ def spawn_ollama_servers(num_gpus, model_name):
         print(f"[info] Ollama 準備完了: {host} (GPU {i})")
     return clients
 
-def analyze_video(video_path, interval, num_gpus, model_name):
+def analyze_video(video_path, interval, num_gpus, model_name, output_dir=None):
     """動画からインターバルごとにフレームを抽出して解析する"""
     import datetime
     start_time = datetime.datetime.now().isoformat()
@@ -267,7 +267,11 @@ def analyze_video(video_path, interval, num_gpus, model_name):
     results.sort(key=lambda r: r["frame"])
 
     # 結果をJSONファイルに保存
-    base = os.path.splitext(video_path)[0]
+    if output_dir:
+        os.makedirs(output_dir, exist_ok=True)
+        base = os.path.join(output_dir, os.path.splitext(os.path.basename(video_path))[0])
+    else:
+        base = os.path.splitext(video_path)[0]
     output_path = base + "_results.json"
     with open(output_path, "w", encoding="utf-8") as f:
         json.dump(results, f, ensure_ascii=False, indent=2)
@@ -303,6 +307,8 @@ if __name__ == "__main__":
                         help="動画モード時のフレーム抽出間隔（秒）。デフォルト: 1.0")
     parser.add_argument("--num-gpus", type=int, default=None,
                         help="並列に立てる Ollama インスタンス数。省略時は nvidia-smi で自動検出")
+    parser.add_argument("--output", default=None,
+                        help="出力ディレクトリ。省略時は入力ファイルと同じディレクトリ")
     args = parser.parse_args()
 
     video_exts = {".mp4", ".avi", ".mov", ".mkv", ".webm"}
@@ -310,6 +316,6 @@ if __name__ == "__main__":
 
     if ext in video_exts:
         num_gpus = args.num_gpus if args.num_gpus is not None else detect_gpu_count()
-        analyze_video(args.input, args.interval, num_gpus, args.model)
+        analyze_video(args.input, args.interval, num_gpus, args.model, args.output)
     else:
         analyze_image(args.input, args.model)
